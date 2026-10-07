@@ -1,8 +1,8 @@
-import type { Prisma } from "@prisma/client";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { htmlToPlainText } from "@/lib/content/sanitize";
 import { getStudyContext } from "@/lib/study/queue";
+import { buildCardWhere } from "@/lib/cardFilters";
 import { PageHeader } from "@/components/PageHeader";
 import { CardBrowser, type BrowserCard } from "./CardBrowser";
 
@@ -18,41 +18,8 @@ export default async function CardsPage({ searchParams }: { searchParams: Promis
   const ctx = await getStudyContext(user.id);
   const page = Math.max(1, Number(sp.page) || 1);
 
-  const where: Prisma.CardWhereInput = { deckId: { in: ctx.deckIds } };
-  const and: Prisma.CardWhereInput[] = [];
-  const q = sp.q?.trim();
-  if (q) {
-    and.push({
-      OR: [
-        { front: { contains: q, mode: "insensitive" } },
-        { back: { contains: q, mode: "insensitive" } },
-        { tags: { some: { tag: { contains: q, mode: "insensitive" } } } },
-      ],
-    });
-  }
-  if (sp.day === "unassigned") and.push({ studyDayId: null });
-  else if (sp.day) and.push({ studyDayId: sp.day });
-  if (sp.domain) and.push({ studyDay: { domains: { some: { domainId: Number(sp.domain) } } } });
-  if (sp.source) and.push({ source: sp.source });
+  const where = buildCardWhere(user.id, ctx.deckIds, ctx.dayEnd, sp);
   const mine = { userId: user.id };
-  switch (sp.status) {
-    case "new":
-      and.push({ progress: { none: mine } });
-      break;
-    case "learning":
-      and.push({ progress: { some: { ...mine, state: { in: ["LEARNING", "RELEARNING"] } } } });
-      break;
-    case "learned":
-      and.push({ progress: { some: { ...mine, state: "REVIEW" } } });
-      break;
-    case "due":
-      and.push({ progress: { some: { ...mine, due: { lte: ctx.dayEnd } } } });
-      break;
-    case "weak":
-      and.push({ progress: { some: { ...mine, OR: [{ againCount: { gt: 0 } }, { hardCount: { gt: 0 } }] } } });
-      break;
-  }
-  if (and.length) where.AND = and;
 
   const [cards, total, days, domains, sources] = await Promise.all([
     prisma.card.findMany({

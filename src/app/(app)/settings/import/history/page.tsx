@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { PageHeader } from "@/components/PageHeader";
+import { DeleteImportButton } from "./DeleteImportButton";
 
 export const metadata = { title: "Import history" };
 
@@ -16,6 +17,8 @@ export default async function ImportHistory() {
   const user = await requireUser();
   const settings = await getSettings(user.id);
   const batches = await prisma.importBatch.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 100 });
+  const live = await prisma.card.groupBy({ by: ["importBatchId"], where: { importBatchId: { in: batches.map((b) => b.id) } }, _count: { _all: true } });
+  const liveCount = new Map(live.map((l) => [l.importBatchId, l._count._all]));
   const fmt = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: settings.timezone });
   return (
     <>
@@ -44,6 +47,10 @@ export default async function ImportHistory() {
                 <Cell label="Unassigned" value={b.unassignedCount} />
               </dl>
               {b.mediaCount > 0 && <p className="mt-2 text-xs text-muted">{b.mediaCount} images stored</p>}
+              <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
+                <span className="text-xs text-muted">{(liveCount.get(b.id) ?? 0).toLocaleString()} cards from this import still in your deck</span>
+                {(liveCount.get(b.id) ?? 0) > 0 && <DeleteImportButton batchId={b.id} fileName={b.fileName} />}
+              </div>
             </li>
           ))}
         </ul>

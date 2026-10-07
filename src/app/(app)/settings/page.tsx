@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight, Download, FileUp, History, Image as ImageIcon, LogOut } from "lucide-react";
+import { ChevronRight, Download, FileUp, History, Image as ImageIcon, LogOut, Trash2 } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
@@ -10,6 +10,7 @@ import { logoutAction } from "../../(auth)/actions";
 import { SettingsForm } from "./SettingsForm";
 import { ThemePicker } from "./ThemePicker";
 import { RemoveDemoButton } from "./RemoveDemoButton";
+import { DeleteAllCardsButton } from "./DeleteAllCardsButton";
 
 export const metadata = { title: "Settings" };
 
@@ -17,7 +18,10 @@ export default async function SettingsPage() {
   const user = await requireUser();
   const settings = await getSettings(user.id);
   const deck = await ensureDeck(prisma, user.id);
-  const demoCount = await prisma.card.count({ where: { deckId: deck.id, source: DEMO_SOURCE } });
+  const [demoCount, cardCount] = await Promise.all([
+    prisma.card.count({ where: { deckId: deck.id, source: DEMO_SOURCE } }),
+    prisma.card.count({ where: { deckId: deck.id } }),
+  ]);
 
   return (
     <>
@@ -68,7 +72,16 @@ export default async function SettingsPage() {
                 <span className="block text-xs text-muted">Opens in Excel / Google Sheets</span>
               </span>
             </a>
+            <a href="/cards" className="flex min-h-14 items-center gap-3 px-4 py-3">
+              <Trash2 className="size-5 text-muted" />
+              <span className="flex-1">
+                <span className="block font-medium">Delete selected cards</span>
+                <span className="block text-xs text-muted">Card browser → Select → filter or select all → delete</span>
+              </span>
+              <ChevronRight className="size-5 text-muted" />
+            </a>
             {demoCount > 0 && <RemoveDemoButton count={demoCount} />}
+            <DeleteAllCardsButton count={cardCount} />
           </div>
         </section>
 

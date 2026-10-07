@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { CheckSquare, ChevronLeft, ChevronRight, Filter, Search, X } from "lucide-react";
+import { CheckSquare, ChevronLeft, ChevronRight, Filter, Search, Trash2, X } from "lucide-react";
 import { Sheet } from "@/components/Sheet";
-import { assignCardsToDay } from "./actions";
+import { DeleteCardsSheet } from "@/components/DeleteCardsSheet";
+import { assignCardsToDay, type CardTarget } from "./actions";
 
 export type BrowserCard = { id: string; text: string; day: number | null; state: string; due: string | null; isDue: boolean };
 
@@ -47,6 +48,25 @@ export function CardBrowser({
   const [assignTo, setAssignTo] = useState<string>("");
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
+  const [allMatching, setAllMatching] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const { q: _q, day, domain, status, source } = filters;
+  void _q;
+  const target: CardTarget = allMatching
+    ? { kind: "filters", filters: { q: filters.q, day, domain, status, source } }
+    : { kind: "ids", ids: [...selected] };
+  const selectedCount = allMatching ? total : selected.size;
+
+  function flash(text: string) {
+    setMessage(text);
+    setTimeout(() => setMessage(null), 4000);
+  }
+
+  function resetSelection() {
+    setSelected(new Set());
+    setAllMatching(false);
+    setSelecting(false);
+  }
 
   function navigate(next: Filters & { page?: number }) {
     const params = new URLSearchParams();
@@ -65,6 +85,12 @@ export function CardBrowser({
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
   function toggle(id: string) {
+    if (allMatching) {
+      // Leaving "all matching" mode: start from this page minus the tapped card.
+      setAllMatching(false);
+      setSelected(new Set(cards.map((c) => c.id).filter((x) => x !== id)));
+      return;
+    }
     const next = new Set(selected);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -72,13 +98,11 @@ export function CardBrowser({
   }
 
   function assign() {
-    const ids = [...selected];
+    const t = target;
     startTransition(async () => {
-      const n = await assignCardsToDay(ids, assignTo === "unassigned" ? null : assignTo);
-      setSelected(new Set());
-      setSelecting(false);
-      setMessage(`${n} ${n === 1 ? "card" : "cards"} assigned`);
-      setTimeout(() => setMessage(null), 4000);
+      const n = await assignCardsToDay(t, assignTo === "unassigned" ? null : assignTo);
+      resetSelection();
+      flash(`${n} ${n === 1 ? "card" : "cards"} assigned`);
       router.refresh();
     });
   }
@@ -113,13 +137,19 @@ export function CardBrowser({
           onClick={() => {
             setSelecting(!selecting);
             setSelected(new Set());
+            setAllMatching(false);
           }}
         >
           <CheckSquare className="size-4" /> {selecting ? "Cancel" : "Select"}
         </button>
         {selecting && (
-          <button className="chip" onClick={() => setSelected(new Set(cards.map((c) => c.id)))}>
+          <button className="chip" onClick={() => { setAllMatching(false); setSelected(new Set(cards.map((c) => c.id))); }}>
             Select page ({cards.length})
+          </button>
+        )}
+        {selecting && total > cards.length && (
+          <button className={`chip ${allMatching ? "chip-on" : ""}`} onClick={() => setAllMatching(true)}>
+            Select all {total.toLocaleString()} matching
           </button>
         )}
       </div>
@@ -132,7 +162,7 @@ export function CardBrowser({
                 <input
                   type="checkbox"
                   readOnly
-                  checked={selected.has(c.id)}
+                  checked={allMatching || selected.has(c.id)}
                   className="mt-0.5 size-5 shrink-0 accent-[var(--primary)]"
                   aria-label="Select card"
                 />
@@ -180,24 +210,43 @@ export function CardBrowser({
         </div>
       )}
 
-      {selecting && selected.size > 0 && (
+      {selecting && selectedCount > 0 && (
         <div className="fixed inset-x-0 bottom-16 z-40 border-t border-border bg-surface px-4 py-3 shadow-lg">
-          <div className="mx-auto flex max-w-2xl items-center gap-2">
-            <select className="input flex-1" value={assignTo} onChange={(e) => setAssignTo(e.target.value)} aria-label="Assign to day">
-              <option value="">Assign {selected.size} to…</option>
-              {days.map((d) => (
-                <option key={d.id} value={d.id}>
-                  Day {d.dayNumber} — {d.title}
-                </option>
-              ))}
-              <option value="unassigned">Unassigned</option>
-            </select>
-            <button className="btn btn-primary" disabled={!assignTo || pending} onClick={assign}>
-              {pending ? "…" : "Assign"}
-            </button>
+          <div className="mx-auto max-w-2xl">
+            <p className="mb-2 text-xs font-semibold text-muted">
+              {selectedCount.toLocaleString()} selected{allMatching ? " (all matching the current filters)" : ""}
+            </p>
+            <div className="flex items-center gap-2">
+              <select className="input min-w-0 flex-1" value={assignTo} onChange={(e) => setAssignTo(e.target.value)} aria-label="Assign to day">
+                <option value="">Assign to day…</option>
+                {days.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    Day {d.dayNumber} — {d.title}
+                  </option>
+                ))}
+                <option value="unassigned">Unassigned</option>
+              </select>
+              <button className="btn btn-primary px-3.5" disabled={!assignTo || pending} onClick={assign}>
+                {pending ? "…" : "Assign"}
+              </button>
+              <button className="btn btn-danger px-3.5" onClick={() => setDeleteOpen(true)} aria-label="Delete selected cards">
+                <Trash2 className="size-5" />
+              </button>
+            </div>
           </div>
         </div>
       )}
+      {selecting && selectedCount > 0 && <div className="h-28" aria-hidden />}
+      <DeleteCardsSheet
+        open={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        target={target}
+        onDeleted={({ count, daysRemoved }) => {
+          resetSelection();
+          flash(`${count.toLocaleString()} ${count === 1 ? "card" : "cards"} deleted${daysRemoved ? `, ${daysRemoved} empty days removed` : ""}`);
+          router.refresh();
+        }}
+      />
       {message && (
         <div className="fixed inset-x-0 bottom-20 z-50 mx-auto max-w-sm rounded-2xl bg-text px-4 py-3 text-center text-sm font-medium text-bg shadow-lg max-sm:mx-4" role="status">
           {message}
