@@ -9,7 +9,7 @@ const HAS_HTML = /<\/?[a-z][\s\S]*?>/i;
 
 const CLI_PROMPT = /^[A-Za-z][\w.-]{0,30}(\((?:config|cfg)[\w-]*\))?[#>]\s?\S/;
 const CLI_COMMAND =
-  /^(?:show|sh|conf(?:igure)?\s+t(?:erminal)?|interface|int|ip|ipv6|no|router|network|switchport|hostname|enable|line\s+(?:vty|con)|login|transport|username|spanning-tree|vlan|copy|ping|traceroute|tracert|access-list|standby|vrrp|glbp|channel-group|service|banner|crypto|clock|ntp|logging|snmp-server|end|exit|write|wr|reload|debug|undebug|passive-interface|default-information|redistribute|encapsulation|duplex|speed|shutdown|description|mac\s+address-table|arp|cdp|lldp|errdisable|password|exec-timeout|auto-cost|maximum-paths|distance|neighbor|area|license|boot|dir|delete|erase|do)\b[\w\s./:\-|,()*!#"'?+=<>]*$/i;
+  /^(?:show|sh|conf(?:igure)?\s+t(?:erminal)?|interface|int|ip|ipv6|no|router|network|switchport|hostname|enable|line\s+(?:vty|con)|login|transport|username|spanning-tree|vlan|copy|ping|traceroute|tracert|access-list|standby|vrrp|glbp|channel-group|service|banner|crypto|clock|ntp|logging|snmp-server|end|exit|write|wr|reload|debug|undebug|passive-interface|default-information|redistribute|encapsulation|duplex|speed|shutdown|description|mac\s+address-table|arp|cdp|lldp|errdisable|password|exec-timeout|auto-cost|maximum-paths|distance|neighbor|area|license|boot|dir|delete|erase|do)\b[\w\s./:\-|,()*!#"'?+=<>]*$/;
 
 export function looksLikeCli(line: string): boolean {
   const t = line.trim();

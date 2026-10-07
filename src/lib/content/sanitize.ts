@@ -32,14 +32,30 @@ const OPTIONS: sanitizeHtml.IOptions = {
       "text-decoration": [/^[a-z\s-]+$/i],
       "text-align": [/^(left|right|center|justify)$/],
       "font-family": [/^[\w\s,"'-]+$/],
+      // Image Occlusion shapes are positioned in percentages only.
+      left: [/^\d{1,3}(\.\d+)?%$/],
+      top: [/^\d{1,3}(\.\d+)?%$/],
+      width: [/^\d{1,3}(\.\d+)?%$/],
+      height: [/^\d{1,3}(\.\d+)?%$/],
+      "clip-path": [/^polygon\(\s*[\d.%\s,]+\)$/],
     },
   },
   allowedClasses: { "*": [/^[\w-]+$/] },
   allowedSchemes: ["http", "https", "mailto", "data"],
   allowedSchemesByTag: { img: ["http", "https", "data"], a: ["http", "https", "mailto"] },
   allowProtocolRelative: false,
+  nonTextTags: ["script", "style", "textarea", "option", "noscript", "button", "canvas"],
   transformTags: {
     a: sanitizeHtml.simpleTransform("a", { target: "_blank", rel: "noopener noreferrer" }),
+    // Anki templates (e.g. Image Occlusion Enhanced) style elements by id;
+    // keep those hooks as classes instead of allowing ids.
+    "*": (tagName, attribs) => {
+      if (attribs.id && /^io-[\w-]+$/.test(attribs.id)) {
+        attribs.class = `${attribs.class ?? ""} ${attribs.id}`.trim();
+      }
+      delete attribs.id;
+      return { tagName, attribs };
+    },
   },
 };
 

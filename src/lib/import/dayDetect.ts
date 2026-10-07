@@ -4,6 +4,16 @@
 // Devices", hierarchical tags like CCNA::Day_05 or JITL::Day05::VLANs, etc.
 
 const DAY_RE = /(?:^|[^a-z0-9])day[\s_\-.:#]*0*(\d{1,3})(?![0-9])/i;
+// Fallback for decks organized by section/lesson (e.g. "Flackbox CCNA::Section 03").
+const SECTION_RE = /(?:^|[^a-z0-9])(section|lesson|chapter|module)[\s_\-.:#]*0*(\d{1,3})(?![0-9])/i;
+
+function detectSectionNumber(text: string | null | undefined): number | null {
+  if (!text) return null;
+  const m = SECTION_RE.exec(text);
+  if (!m) return null;
+  const n = Number(m[2]);
+  return n >= 1 && n <= 365 ? n : null;
+}
 
 export function detectDayNumber(text: string | null | undefined): number | null {
   if (!text) return null;
@@ -41,7 +51,12 @@ export function detectDayForCard(tags: string[], deckName?: string | null, expli
   }
   const fromTags = tags.map(detectDayNumber).filter((n): n is number => n != null);
   if (fromTags.length) return Math.min(...fromTags);
-  return detectDayNumber(deckName ?? null);
+  const fromDeck = detectDayNumber(deckName ?? null);
+  if (fromDeck != null) return fromDeck;
+  // No "Day" anywhere: fall back to Section/Lesson/Chapter/Module numbering.
+  const fromSectionTags = tags.map(detectSectionNumber).filter((n): n is number => n != null);
+  if (fromSectionTags.length) return Math.min(...fromSectionTags);
+  return detectSectionNumber(deckName ?? null);
 }
 
 /** Try to pull a topic title out of a deck/tag name, e.g. "CCNA::Day 05 - Ethernet LAN Switching". */
@@ -53,6 +68,13 @@ export function detectDayTitle(text: string | null | undefined): string | null {
     if (m) {
       const title = m[1].replace(/_/g, " ").trim();
       if (title.length >= 2 && title.length <= 80) return title;
+    }
+    const sec = /(section|lesson|chapter|module)[\s_\-.:#]*0*(\d{1,3})(?:\s*[-–—:|.]\s*(.+))?$/i.exec(seg.trim());
+    if (sec && !/day[\s_\-.:#]*\d/i.test(text)) {
+      const title = sec[3]?.replace(/_/g, " ").trim();
+      if (title && title.length >= 2 && title.length <= 80) return title;
+      const word = sec[1][0].toUpperCase() + sec[1].slice(1).toLowerCase();
+      return `${word} ${Number(sec[2])}`;
     }
   }
   return null;

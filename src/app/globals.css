@@ -260,3 +260,64 @@ label {
 .no-scrollbar {
   scrollbar-width: none;
 }
+
+/* ── Image Occlusion (Anki built-in + Image Occlusion Enhanced add-on) ── */
+.card-content .io-header {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+.card-content .io-wrapper,
+.card-content .io-container {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
+}
+.card-content .io-wrapper img,
+.card-content .io-container img {
+  display: block;
+  width: 100%;
+  margin: 0;
+  border-radius: 0;
+}
+.card-content .io-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+}
+.card-content .io-overlay img {
+  height: 100%;
+}
+.card-content .io-original {
+  position: relative;
+  z-index: 2;
+}
+.card-content .io-shape {
+  position: absolute;
+  z-index: 3;
+  border: 1px solid #212121;
+}
+.card-content .io-active {
+  background: #ff8e8e;
+}
+.card-content .io-inactive {
+  background: #ffeba2;
+}
+.card-content .io-revealed {
+  background: transparent;
+  border: 2px solid #e5484d;
+}
+.card-content .io-ellipse {
+  border-radius: 50%;
+}
+.card-content .io-footer,
+.card-content .io-extra {
+  margin-top: 0.75rem;
+  font-size: 0.95em;
+}
+.card-content .io-field-descr {
+  font-size: 0.75em;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+}

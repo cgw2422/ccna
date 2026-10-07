@@ -3,7 +3,8 @@ import path from "node:path";
 import { unzipSync } from "fflate";
 import { decompress as zstdDecompress } from "fzstd";
 import initSqlJs, { type Database } from "sql.js";
-import { suggestMapping, type ParsedTable } from "./types";
+import type { ParsedTable } from "./types";
+import { renderAnkiCard, type AnkiNotetype } from "./ankiTemplate";
 
 const ZSTD_MAGIC = [0x28, 0xb5, 0x2f, 0xfd];
 
@@ -92,6 +93,51 @@ function readMediaMap(raw: Uint8Array | undefined): Map<string, string> {
 
 export type ApkgResult = ParsedTable & { media: { filename: string; data: Uint8Array }[]; noteCount: number };
 
+function protoString(buf: Uint8Array, field: number): string {
+  for (const f of protoFields(buf)) if (f.field === field && f.value instanceof Uint8Array) return new TextDecoder().decode(f.value);
+  return "";
+}
+
+function protoVarint(buf: Uint8Array, field: number): number {
+  for (const f of protoFields(buf)) if (f.field === field && typeof f.value === "number") return f.value;
+  return 0;
+}
+
+function loadNotetypes(db: Database): Map<string, AnkiNotetype> {
+  const out = new Map<string, AnkiNotetype>();
+  if (hasTable(db, "notetypes") && hasTable(db, "fields") && hasTable(db, "templates")) {
+    for (const r of all<{ id: number; name: string; config: Uint8Array }>(db, "SELECT id, name, config FROM notetypes")) {
+      out.set(String(r.id), {
+        name: r.name,
+        kind: r.config && protoVarint(r.config, 1) === 1 ? "cloze" : "normal",
+        fields: [],
+        templates: [],
+      });
+    }
+    for (const r of all<{ ntid: number; name: string }>(db, "SELECT ntid, name FROM fields ORDER BY ntid, ord")) out.get(String(r.ntid))?.fields.push(r.name);
+    for (const r of all<{ ntid: number; name: string; config: Uint8Array }>(db, "SELECT ntid, name, config FROM templates ORDER BY ntid, ord")) {
+      out.get(String(r.ntid))?.templates.push({ name: r.name, qfmt: protoString(r.config, 1), afmt: protoString(r.config, 2) });
+    }
+    return out;
+  }
+  const col = all<{ models: string }>(db, "SELECT models FROM col")[0];
+  const models = JSON.parse(col?.models || "{}") as Record<
+    string,
+    { name: string; type?: number; flds: { name: string; ord: number }[]; tmpls: { name: string; ord: number; qfmt: string; afmt: string }[] }
+  >;
+  for (const [id, m] of Object.entries(models)) {
+    out.set(id, {
+      name: m.name,
+      kind: m.type === 1 ? "cloze" : "normal",
+      fields: [...m.flds].sort((a, b) => a.ord - b.ord).map((f) => f.name),
+      templates: [...(m.tmpls ?? [])].sort((a, b) => a.ord - b.ord).map((t) => ({ name: t.name, qfmt: t.qfmt, afmt: t.afmt })),
+    });
+  }
+  return out;
+}
+
+export const APKG_COLUMNS = ["Front", "Back", "Tags", "Deck", "Card ID", "Note type"] as const;
+
 export async function parseApkg(buffer: Uint8Array): Promise<ApkgResult> {
   const files = unzipSync(buffer);
   const dbBytes = files["collection.anki21b"]
@@ -102,25 +148,8 @@ export async function parseApkg(buffer: Uint8Array): Promise<ApkgResult> {
   const SQL = await getSql();
   const db = new SQL.Database(dbBytes);
   try {
-    // Note types → field names
-    const fieldNames = new Map<string, string[]>();
-    const notetypeNames = new Map<string, string>();
-    if (hasTable(db, "fields") && hasTable(db, "notetypes")) {
-      for (const r of all<{ ntid: number; ord: number; name: string }>(db, "SELECT ntid, ord, name FROM fields ORDER BY ntid, ord")) {
-        const k = String(r.ntid);
-        fieldNames.set(k, [...(fieldNames.get(k) ?? []), r.name]);
-      }
-      for (const r of all<{ id: number; name: string }>(db, "SELECT id, name FROM notetypes")) notetypeNames.set(String(r.id), r.name);
-    } else {
-      const col = all<{ models: string }>(db, "SELECT models FROM col")[0];
-      const models = JSON.parse(col?.models || "{}") as Record<string, { name: string; flds: { name: string; ord: number }[] }>;
-      for (const [id, m] of Object.entries(models)) {
-        fieldNames.set(id, [...m.flds].sort((a, b) => a.ord - b.ord).map((f) => f.name));
-        notetypeNames.set(id, m.name);
-      }
-    }
+    const notetypes = loadNotetypes(db);
 
-    // Decks
     const deckNames = new Map<string, string>();
     if (hasTable(db, "decks")) {
       for (const r of all<{ id: number; name: string }>(db, "SELECT id, name FROM decks")) deckNames.set(String(r.id), r.name.replace(/\x1f/g, "::"));
@@ -129,30 +158,33 @@ export async function parseApkg(buffer: Uint8Array): Promise<ApkgResult> {
       const decks = JSON.parse(col?.decks || "{}") as Record<string, { name: string }>;
       for (const [id, d] of Object.entries(decks)) deckNames.set(id, d.name);
     }
-    const noteDeck = new Map<string, string>();
-    for (const r of all<{ nid: number; did: number }>(db, "SELECT nid, MIN(did) AS did FROM cards GROUP BY nid")) noteDeck.set(String(r.nid), String(r.did));
 
-    const notes = all<{ id: number; guid: string; mid: number; flds: string; tags: string }>(db, "SELECT id, guid, mid, flds, tags FROM notes ORDER BY id");
-
-    // Columns: fields of the most common note type, padded to the widest note.
-    const midCounts = new Map<string, number>();
-    let width = 0;
-    for (const n of notes) {
-      midCounts.set(String(n.mid), (midCounts.get(String(n.mid)) ?? 0) + 1);
-      width = Math.max(width, n.flds.split("\x1f").length);
+    const notes = new Map<string, { guid: string; mid: number; flds: string; tags: string }>();
+    for (const n of all<{ id: number; guid: string; mid: number; flds: string; tags: string }>(db, "SELECT id, guid, mid, flds, tags FROM notes")) {
+      notes.set(String(n.id), n);
     }
-    const mainMid = [...midCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-    const names = fieldNames.get(mainMid ?? "") ?? [];
-    const fieldCols = Array.from({ length: width }, (_, i) => names[i] ?? `Field ${i + 1}`);
-    const columns = [...fieldCols, "Tags", "Deck", "GUID", "Note type"];
+    // One row per real Anki card (a cloze note with c1..c3 → three cards).
+    const cards = all<{ nid: number; did: number; ord: number }>(db, "SELECT nid, did, ord FROM cards ORDER BY nid, ord");
 
-    const rows = notes.map((n) => {
-      const flds = n.flds.split("\x1f");
-      while (flds.length < width) flds.push("");
-      return [...flds, n.tags.trim(), deckNames.get(noteDeck.get(String(n.id)) ?? "") ?? "", n.guid, notetypeNames.get(String(n.mid)) ?? ""];
-    });
+    const rows: string[][] = [];
+    const typeCounts = new Map<string, number>();
+    for (const c of cards) {
+      const note = notes.get(String(c.nid));
+      if (!note) continue;
+      const nt = notetypes.get(String(note.mid));
+      const values = note.flds.split("\x1f");
+      const deck = deckNames.get(String(c.did)) ?? "";
+      const tags = note.tags.trim();
+      const { front, back } = nt
+        ? renderAnkiCard(nt, values, { tags, deck, ord: c.ord })
+        : { front: values[0] ?? "", back: values[1] ?? "" };
+      // Keep the plain GUID for the first card so re-imports match older imports.
+      const cardId = c.ord === 0 ? note.guid : `${note.guid}#${c.ord}`;
+      const typeName = nt?.name ?? "";
+      typeCounts.set(typeName, (typeCounts.get(typeName) ?? 0) + 1);
+      rows.push([front, back, tags, deck, cardId, typeName]);
+    }
 
-    // Media
     const mediaMap = readMediaMap(files["media"]);
     const media: { filename: string; data: Uint8Array }[] = [];
     for (const [entry, filename] of mediaMap) {
@@ -160,11 +192,19 @@ export async function parseApkg(buffer: Uint8Array): Promise<ApkgResult> {
       if (data && filename) media.push({ filename, data: maybeDecompress(data) });
     }
 
-    const base = suggestMapping(fieldCols);
-    const suggested = { ...base, tags: width, deck: width + 1, sourceId: width + 2 };
-    const notesOut = [`Anki package: ${notes.length} notes, ${media.length} media files.`];
+    const notesOut = [`Anki package: ${notes.size} notes → ${rows.length} cards, ${media.length} media files.`];
+    const types = [...typeCounts.entries()].sort((a, b) => b[1] - a[1]).map(([n, c]) => `${n || "unknown"} (${c})`);
+    if (types.length) notesOut.push(`Note types: ${types.join(", ")}. Cards are rendered with the deck's own templates.`);
     if (files["collection.anki21b"]) notesOut.push("Modern Anki format (2.1.50+) detected.");
-    return { columns, rows, suggested, fieldsAreHtml: true, notes: notesOut, media, noteCount: notes.length };
+    return {
+      columns: [...APKG_COLUMNS],
+      rows,
+      suggested: { front: 0, back: 1, tags: 2, deck: 3, sourceId: 4, extra: -1, day: -1 },
+      fieldsAreHtml: true,
+      notes: notesOut,
+      media,
+      noteCount: notes.size,
+    };
   } finally {
     db.close();
   }

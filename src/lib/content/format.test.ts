@@ -7,7 +7,7 @@ describe("looksLikeCli", () => {
     "detects %s",
     (l) => expect(looksLikeCli(l)).toBe(true),
   );
-  it.each(["What does a router do?", "Show the answer to the class please now.", "Interfaces connect devices together in a LAN and WAN environment."])(
+  it.each(["What does a router do?", "Show the answer to the class please now.", "Interfaces connect devices together in a LAN and WAN environment.", "Transport = Layer 4"])(
     "ignores prose %s",
     (l) => expect(looksLikeCli(l)).toBe(false),
   );

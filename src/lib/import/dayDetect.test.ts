@@ -38,6 +38,12 @@ describe("detectDayForCard", () => {
   it("uses explicit day column", () => {
     expect(detectDayForCard(["Day_1"], null, "7")).toBe(7);
   });
+  it("falls back to Section numbering when there is no Day", () => {
+    expect(detectDayForCard([], "Flackbox CCNA 200-301 v1.1b::Section 03")).toBe(3);
+    expect(detectDayForCard(["Day_7"], "Flackbox::Section 03")).toBe(7);
+    expect(detectDayTitle("Flackbox CCNA 200-301 v1.1b::Section 03")).toBe("Section 3");
+    expect(detectDayTitle("Course::Lesson 4 - VLANs")).toBe("VLANs");
+  });
   it("returns null when nothing found", () => {
     expect(detectDayForCard(["ospf"], "CCNA")).toBeNull();
   });
