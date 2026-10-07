@@ -1,0 +1,356 @@
+// CCNA Flashcards — data model
+//
+// Design rule: flashcard CONTENT (Deck, StudyDay, Card, CardTag, MediaAsset)
+// is kept separate from per-user PROGRESS (UserCardProgress, Review,
+// UserStudyDayState, StudySession). Cards never store review state, so the
+// same content can be studied by many users later.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CardState {
+  NEW
+  LEARNING
+  REVIEW
+  RELEARNING
+}
+
+enum DayStatus {
+  ACTIVE
+  REVIEW_ONLY
+  PAUSED
+}
+
+enum SessionType {
+  MAIN
+  WEAK
+  CUSTOM
+}
+
+enum SessionCardStatus {
+  PENDING
+  DONE
+}
+
+enum ImportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ThemePreference {
+  SYSTEM
+  LIGHT
+  DARK
+}
+
+// ─── Accounts ────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  authSessions  AuthSession[]
+  settings      UserSettings?
+  decks         Deck[]
+  progress      UserCardProgress[]
+  reviews       Review[]
+  studySessions StudySession[]
+  dayStates     UserStudyDayState[]
+  importBatches ImportBatch[]
+  mediaAssets   MediaAsset[]
+}
+
+model AuthSession {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  userAgent  String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model UserSettings {
+  userId                String          @id
+  newCardsPerDay        Int             @default(30)
+  maxReviewsPerDay      Int? // null = unlimited
+  autoShowAnswerSeconds Int? // null = off
+  randomizeNewCards     Boolean         @default(false)
+  desiredRetention      Float           @default(0.9)
+  examDate              DateTime?       @db.Date
+  timezone              String          @default("UTC")
+  theme                 ThemePreference @default(SYSTEM)
+  // Status of cards whose study day could not be detected ("Unassigned").
+  unassignedStatus      DayStatus       @default(PAUSED)
+  updatedAt             DateTime        @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Content ────────────────────────────────────────────────────────────────
+
+model Deck {
+  id          String   @id @default(cuid())
+  ownerId     String
+  name        String
+  description String?
+  source      String   @default("Jeremy's IT Lab")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner         User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  studyDays     StudyDay[]
+  cards         Card[]
+  importBatches ImportBatch[]
+  mediaAssets   MediaAsset[]
+
+  @@index([ownerId])
+}
+
+model StudyDay {
+  id        String   @id @default(cuid())
+  deckId    String
+  dayNumber Int
+  title     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deck       Deck                @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  cards      Card[]
+  domains    StudyDayDomain[]
+  userStates UserStudyDayState[]
+
+  @@unique([deckId, dayNumber])
+}
+
+// Per-user ACTIVE / REVIEW_ONLY / PAUSED state for a study day.
+// A missing row means ACTIVE.
+model UserStudyDayState {
+  userId     String
+  studyDayId String
+  status     DayStatus @default(ACTIVE)
+  updatedAt  DateTime  @updatedAt
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  studyDay StudyDay @relation(fields: [studyDayId], references: [id], onDelete: Cascade)
+
+  @@id([userId, studyDayId])
+}
+
+model CcnaDomain {
+  id         Int              @id
+  key        String           @unique
+  name       String
+  examWeight Int // % of the CCNA 200-301 exam
+  sortOrder  Int
+  days       StudyDayDomain[]
+}
+
+model StudyDayDomain {
+  studyDayId String
+  domainId   Int
+
+  studyDay StudyDay   @relation(fields: [studyDayId], references: [id], onDelete: Cascade)
+  domain   CcnaDomain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@id([studyDayId, domainId])
+}
+
+model Card {
+  id                  String   @id @default(cuid())
+  deckId              String
+  studyDayId          String? // null = Unassigned
+  dayAssignedManually Boolean  @default(false)
+  front               String   @db.Text // sanitized HTML
+  back                String   @db.Text // sanitized HTML
+  extra               String?  @db.Text
+  source              String   @default("Jeremy's IT Lab")
+  sourceId            String? // e.g. Anki note GUID
+  sourceTags          String   @default("") // original raw tag string
+  sourceDeck          String? // original Anki deck name, if any
+  contentHash         String // normalized front+back
+  frontHash           String // normalized front
+  importBatchId       String?
+  sortIndex           Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  deck         Deck               @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  studyDay     StudyDay?          @relation(fields: [studyDayId], references: [id], onDelete: SetNull)
+  importBatch  ImportBatch?       @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  tags         CardTag[]
+  progress     UserCardProgress[]
+  reviews      Review[]
+  sessionCards StudySessionCard[]
+
+  @@index([deckId, studyDayId])
+  @@index([deckId, contentHash])
+  @@index([deckId, frontHash])
+  @@index([deckId, sourceId])
+  @@index([importBatchId])
+}
+
+model CardTag {
+  cardId String
+  tag    String
+
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@id([cardId, tag])
+  @@index([tag])
+}
+
+// Image/media metadata. Bytes live in object/file storage, never in Postgres.
+model MediaAsset {
+  id            String   @id @default(cuid())
+  userId        String
+  deckId        String?
+  importBatchId String?
+  filename      String // name referenced by card HTML, e.g. <img src="ospf.png">
+  storageKey    String // content-addressed object key (sha1)
+  contentType   String
+  size          Int
+  sha1          String?
+  createdAt     DateTime @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deck        Deck?        @relation(fields: [deckId], references: [id], onDelete: SetNull)
+  importBatch ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, filename])
+  @@index([storageKey])
+}
+
+model ImportBatch {
+  id              String       @id @default(cuid())
+  userId          String
+  deckId          String
+  fileName        String
+  format          String // csv | tsv | apkg
+  source          String       @default("Jeremy's IT Lab")
+  status          ImportStatus @default(PENDING)
+  totalRows       Int          @default(0)
+  createdCount    Int          @default(0)
+  duplicateCount  Int          @default(0)
+  updatedCount    Int          @default(0)
+  errorCount      Int          @default(0)
+  unassignedCount Int          @default(0)
+  mediaCount      Int          @default(0)
+  mapping         Json?
+  options         Json?
+  errors          Json?
+  createdAt       DateTime     @default(now())
+  completedAt     DateTime?
+
+  user  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deck  Deck         @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  cards Card[]
+  media MediaAsset[]
+
+  @@index([userId, createdAt])
+}
+
+// ─── Per-user progress ───────────────────────────────────────────────────────
+
+// FSRS scheduling state for one user + one card. Missing row = unseen/new.
+model UserCardProgress {
+  id            String    @id @default(cuid())
+  userId        String
+  cardId        String
+  state         CardState @default(NEW)
+  due           DateTime
+  stability     Float     @default(0)
+  difficulty    Float     @default(0)
+  elapsedDays   Int       @default(0)
+  scheduledDays Int       @default(0)
+  learningSteps Int       @default(0)
+  reps          Int       @default(0)
+  lapses        Int       @default(0)
+  lastReview    DateTime?
+  againCount    Int       @default(0)
+  hardCount     Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cardId])
+  @@index([userId, state, due])
+}
+
+// Immutable review log. Never deleted when study-plan settings change.
+model Review {
+  id              String    @id @default(cuid())
+  userId          String
+  cardId          String
+  sessionId       String?
+  rating          Int // 1 Again, 2 Hard, 3 Good, 4 Easy
+  stateBefore     CardState
+  stateAfter      CardState
+  dueAfter        DateTime
+  stability       Float
+  difficulty      Float
+  elapsedDays     Int
+  scheduledDays   Int
+  durationMs      Int?
+  reviewedAt      DateTime  @default(now())
+  // Snapshot of the progress row before this review (enables Undo).
+  prevProgress    Json?
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card    Card          @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  session StudySession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, reviewedAt])
+  @@index([cardId])
+}
+
+model StudySession {
+  id          String      @id @default(cuid())
+  userId      String
+  type        SessionType
+  name        String?
+  filters     Json?
+  createdAt   DateTime    @default(now())
+  completedAt DateTime?
+
+  user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cards   StudySessionCard[]
+  reviews Review[]
+
+  @@index([userId, createdAt])
+}
+
+// Fixed card list for temporary (weak / custom) sessions.
+model StudySessionCard {
+  id         String            @id @default(cuid())
+  sessionId  String
+  cardId     String
+  position   Int
+  status     SessionCardStatus @default(PENDING)
+  lastRating Int?
+  answeredAt DateTime?
+
+  session StudySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  card    Card         @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, cardId])
+  @@index([sessionId, status, position])
+}
