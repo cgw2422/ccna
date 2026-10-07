@@ -97,8 +97,7 @@ npm run build
 The repo includes `railway.json`, which tells Railway to:
 
 - **build** with `npm run build` (`prisma generate && next build`)
-- run **pre-deploy** `npm run db:deploy` (`prisma migrate deploy && prisma db seed` — both idempotent)
-- **start** with `npm run start` (Next.js listens on Railway's `$PORT`)
+- **start** with `npm run start`, which runs `prisma migrate deploy && prisma db seed` (both idempotent) and then `next start` on Railway's `$PORT` — so the database schema is always up to date before the app serves requests
 - health-check `GET /api/health`
 
 ### Step by step
@@ -120,7 +119,7 @@ The repo includes `railway.json`, which tells Railway to:
    - **Railway Volume (simplest):** right-click the app service → **Attach Volume**, mount path `/data`. Keep `STORAGE_DRIVER` unset (`local`) and `STORAGE_DIR=/data/media`.
    - **S3-compatible bucket** (Railway Bucket, Cloudflare R2, AWS S3, …): set `STORAGE_DRIVER=s3`, `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` (and `S3_FORCE_PATH_STYLE=true` if your provider needs it).
 6. App service → **Settings → Networking → Generate Domain**.
-7. Deploy (Railway redeploys automatically on every push). Watch the deploy logs for `prisma migrate deploy` and `✓ CCNA domains`.
+7. Deploy (Railway redeploys automatically on every push). The deploy logs should show `All migrations have been successfully applied` (or `No pending migrations`) and `✓ CCNA domains` before `Ready`.
 8. Open the domain on your phone, log in (or `/register` for the first account), then **Add to Home Screen** (iOS Safari: Share → Add to Home Screen; Android Chrome: menu → Install app).
 
 ### Environment variables
@@ -139,7 +138,7 @@ The repo includes `railway.json`, which tells Railway to:
 
 ```bash
 npx prisma migrate dev --name describe_change   # locally; commit prisma/migrations
-git push                                         # Railway runs prisma migrate deploy before starting
+git push                                         # the app runs prisma migrate deploy on start
 ```
 
 ---
